@@ -117,11 +117,17 @@ func (rp *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := rp.client.Do(newReq)
+<<<<<<< HEAD
+=======
+	defer resp.Body.Close()
+>>>>>>> ae9665efaac5e353a16af20eadcc939384837f2e
 	if err != nil {
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
+=======
+>>>>>>> ae9665efaac5e353a16af20eadcc939384837f2e
 
 	// Copy the response headers and body back to the client, stripping any hop-by-hop headers.
 	// TODO: We should also consider copying the trailers if the response has any.
