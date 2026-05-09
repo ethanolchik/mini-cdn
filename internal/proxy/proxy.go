@@ -92,7 +92,8 @@ func (rp *ReverseProxy) cloneRequest(r *http.Request, originURL string) (*http.R
 // TODO: In the future, we can add load balancing and health checks to distribute requests across multiple origins.
 func (rp *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// If we don't have any origins, return
-	if len(rp.origins) < 1 {
+	if len(rp.origins) == 0 {
+		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 		return
 	}
 
