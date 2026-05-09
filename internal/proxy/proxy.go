@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/ethanolchik/mini-cdn/internal/cache"
@@ -17,7 +18,7 @@ var hopByHopHeadersMap = map[string]struct{}{
 	"Transfer-Encoding":   {},
 	"Upgrade":             {},
 	"Proxy-Authorization": {},
-	"Proxy-Connection":    {},
+	"Proxy-Authenticate":  {},
 	"Te":                  {},
 	"Trailers":            {},
 }
@@ -30,11 +31,21 @@ func isHopByHop(header string) bool {
 
 // Copy a set of headers, removing all hop-by-hop headers.
 func copyHeaders(dest, src http.Header) {
+	// Build set of connection-listed headers to strip
+	connHeaders := map[string]struct{}{}
+	for _, h := range src["Connection"] {
+		for _, header := range strings.Split(h, ",") {
+			connHeaders[http.CanonicalHeaderKey(strings.TrimSpace(header))] = struct{}{}
+		}
+	}
+
 	for key, values := range src {
 		if isHopByHop(key) {
 			continue
 		}
-
+		if _, ok := connHeaders[key]; ok {
+			continue
+		}
 		for _, v := range values {
 			dest.Add(key, v)
 		}
