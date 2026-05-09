@@ -5,30 +5,24 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 )
 
-var hopByHopHeaders = []string{
-	"Connection",
-	"Keep-Alive",
-	"Transfer-Encoding",
-	"Upgrade",
-	"Proxy-Authorization",
-	"Proxy-Connection",
-	"Te",
-	"Trailers",
+var hopByHopHeadersMap = map[string]struct{}{
+	"Connection":          {},
+	"Keep-Alive":          {},
+	"Transfer-Encoding":   {},
+	"Upgrade":             {},
+	"Proxy-Authorization": {},
+	"Proxy-Connection":    {},
+	"Te":                  {},
+	"Trailers":            {},
 }
 
 // Check if a header is in the hop-by-hop map.
 func isHopByHop(header string) bool {
-	for _, h := range hopByHopHeaders {
-		if strings.EqualFold(h, header) {
-			return true
-		}
-	}
-
-	return false
+	_, ok := hopByHopHeadersMap[header]
+	return ok
 }
 
 // Copy a set of headers, removing all hop-by-hop headers.
