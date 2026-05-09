@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ethanolchik/mini-cdn/internal/cache"
+	"golang.org/x/sync/singleflight"
 )
 
 var hopByHopHeadersMap = map[string]struct{}{
@@ -45,6 +46,7 @@ type ReverseProxy struct {
 	origins []string
 	client  *http.Client
 	cache   *cache.Cache
+	group   singleflight.Group
 }
 
 // New creates a new ReverseProxy with the specified origins and a default HTTP client with a 30 second timeout and no redirects.
@@ -130,39 +132,43 @@ func (rp *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		newReq.Header.Set("X-Forwarded-For", ip)
 	}
 
-	resp, err := rp.client.Do(newReq)
+	result, err, _ := rp.group.Do(cacheKey, func() (interface{}, error) {
+		resp, err := rp.client.Do(newReq)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+
+		// TODO: For large responses, consider streaming the response body back to the client while also writing it to cache,
+		// 		 instead of reading the entire response body into memory at once.
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+
+		return &cache.CacheEntry{
+			StatusCode: resp.StatusCode,
+			Header:     resp.Header.Clone(),
+			Body:       body,
+		}, nil
+	})
+
 	if err != nil {
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
 
 	// Copy the response headers and body back to the client, stripping any hop-by-hop headers.
 	// TODO: We should also consider copying the trailers if the response has any.
-
-	entry := &cache.CacheEntry{
-		StatusCode: resp.StatusCode,
-		Header:     resp.Header.Clone(),
-		Body:       nil,
-	}
-
-	// Read the response body into the cache entry
-	// TODO: For large responses, consider streaming the response body back to the client while also writing it to cache,
-	// 		 instead of reading the entire response body into memory at once.
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		http.Error(w, "Bad Gateway", http.StatusBadGateway)
-		return
-	}
-	entry.Body = body
+	entry := result.(*cache.CacheEntry)
 
 	// Add the response to cache before writing it back to the client.
 	// This way, if writing the response back to the client fails, we still have it in cache for future requests.
 	rp.cache.Put(cacheKey, *entry)
 
 	// Write the response back to the client
-	copyHeaders(w.Header(), resp.Header)
+	copyHeaders(w.Header(), entry.Header)
 	w.Header().Set("X-Cache", "MISS")
-	w.WriteHeader(resp.StatusCode)
+	w.WriteHeader(entry.StatusCode)
 	w.Write(entry.Body)
 }
