@@ -17,7 +17,7 @@ type node struct {
 
 type CacheEntry struct {
 	StatusCode int
-	Headers    http.Header
+	Header     http.Header
 	Body       []byte
 }
 
@@ -69,6 +69,10 @@ func New(capacity int, maxTTLSeconds float64) Cache {
 		tail:          tail,
 		maxTTLSeconds: maxTTLSeconds,
 	}
+}
+
+func CacheKey(method, path, query string) string {
+	return method + " " + path + "?" + query
 }
 
 func (c *Cache) push_back(entry *node) {
