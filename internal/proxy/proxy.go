@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/ethanolchik/mini-cdn/internal/cache"
 )
 
 var hopByHopHeadersMap = map[string]struct{}{
@@ -21,7 +23,7 @@ var hopByHopHeadersMap = map[string]struct{}{
 
 // Check if a header is in the hop-by-hop map.
 func isHopByHop(header string) bool {
-	_, ok := hopByHopHeadersMap[header]
+	_, ok := hopByHopHeadersMap[http.CanonicalHeaderKey(header)]
 	return ok
 }
 
@@ -42,10 +44,12 @@ func copyHeaders(dest, src http.Header) {
 type ReverseProxy struct {
 	origins []string
 	client  *http.Client
+	cache   *cache.Cache
 }
 
 // New creates a new ReverseProxy with the specified origins and a default HTTP client with a 30 second timeout and no redirects.
 func New(origins []string) *ReverseProxy {
+	c := cache.New(100, 60) // TODO: Make these parameters configurable in the future
 	return &ReverseProxy{
 		origins: origins,
 		client: &http.Client{
@@ -54,6 +58,7 @@ func New(origins []string) *ReverseProxy {
 				return http.ErrUseLastResponse
 			},
 		},
+		cache: &c,
 	}
 }
 
@@ -91,6 +96,20 @@ func (rp *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if the request is in cache. If it is, return the cached response. If it's not, forward the request to the origin and cache the response for future requests.
+	cacheKey := cache.CacheKey(r.Method, r.URL.Path, r.URL.RawQuery)
+	if entry, err := rp.cache.Get(cacheKey); err == nil {
+		for key, values := range entry.Header {
+			for _, v := range values {
+				w.Header().Add(key, v)
+			}
+		}
+		w.Header().Set("X-Cache", "HIT")
+		w.WriteHeader(entry.StatusCode)
+		w.Write(entry.Body)
+		return
+	}
+
 	// For now, we select the first origin. This will change when load balancing is introduced
 	newReq, err := rp.cloneRequest(r, rp.origins[0])
 	if err != nil {
@@ -120,8 +139,30 @@ func (rp *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Copy the response headers and body back to the client, stripping any hop-by-hop headers.
 	// TODO: We should also consider copying the trailers if the response has any.
-	// TODO: When caching is implemented, we should check for cacheable responses and store them in the cache before writing back to the client.
+
+	entry := &cache.CacheEntry{
+		StatusCode: resp.StatusCode,
+		Header:     resp.Header.Clone(),
+		Body:       nil,
+	}
+
+	// Read the response body into the cache entry
+	// TODO: For large responses, consider streaming the response body back to the client while also writing it to cache,
+	// 		 instead of reading the entire response body into memory at once.
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, "Bad Gateway", http.StatusBadGateway)
+		return
+	}
+	entry.Body = body
+
+	// Add the response to cache before writing it back to the client.
+	// This way, if writing the response back to the client fails, we still have it in cache for future requests.
+	rp.cache.Put(cacheKey, *entry)
+
+	// Write the response back to the client
 	copyHeaders(w.Header(), resp.Header)
+	w.Header().Set("X-Cache", "MISS")
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	w.Write(entry.Body)
 }
