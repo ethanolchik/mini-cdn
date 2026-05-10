@@ -18,8 +18,7 @@ func newTestProxy(originURL string) *ReverseProxy {
 // newTestProxyWithTTL creates a proxy with a custom TTL for testing expiry.
 func newTestProxyWithTTL(originURL string, ttl float64) *ReverseProxy {
 	rp := New([]string{originURL})
-	c := cache.New(100, ttl)
-	rp.cache = &c
+	rp.cache = cache.New(100, 60)
 	return rp
 }
 
@@ -125,6 +124,7 @@ func TestBadGatewayUnreachableOrigin(t *testing.T) {
 // TestTTLExpiry verifies that cache entries expire after the TTL.
 func TestTTLExpiry(t *testing.T) {
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "max-age=1")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("hello from origin"))
 	}))
@@ -132,7 +132,7 @@ func TestTTLExpiry(t *testing.T) {
 
 	rp := newTestProxyWithTTL(origin.URL, 1) // 1 second TTL
 
-	// First request — cache miss
+	// First request =  cache miss
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	w := httptest.NewRecorder()
 	rp.ServeHTTP(w, req)
@@ -141,7 +141,7 @@ func TestTTLExpiry(t *testing.T) {
 		t.Fatalf("expected MISS, got %q", got)
 	}
 
-	// Second request before TTL — cache hit
+	// Second request before TTL = cache hit
 	req = httptest.NewRequest(http.MethodGet, "/test", nil)
 	w = httptest.NewRecorder()
 	rp.ServeHTTP(w, req)
@@ -153,7 +153,7 @@ func TestTTLExpiry(t *testing.T) {
 	// Wait for TTL to expire
 	time.Sleep(2 * time.Second)
 
-	// Third request after TTL — cache miss again
+	// Third request after TTL = cache miss again
 	req = httptest.NewRequest(http.MethodGet, "/test", nil)
 	w = httptest.NewRecorder()
 	rp.ServeHTTP(w, req)

@@ -8,17 +8,23 @@ import (
 )
 
 type node struct {
-	key       string
-	val       CacheEntry
-	next      *node
-	prev      *node
-	timestamp time.Time
+	key  string
+	val  CacheEntry
+	next *node
+	prev *node
+
+	maxTTLSeconds float64
 }
 
 type CacheEntry struct {
+	// The status code of the cache entry
 	StatusCode int
-	Header     http.Header
-	Body       []byte
+	// The headers of the cache entry
+	Header http.Header
+	// The contents cached
+	Body []byte
+	// The timestamp of when the entry was cached
+	Timestamp time.Time
 }
 
 // LRU Cache
@@ -30,9 +36,9 @@ type Cache struct {
 	head     *node
 	tail     *node
 
-	maxTTLSeconds float64
-
-	mu sync.Mutex
+	// The maximum time to live that the cache will default to when Cache-Control header is not provided
+	MaxTTLSeconds float64
+	mu            sync.Mutex
 }
 
 type CacheMissError struct {
@@ -43,7 +49,7 @@ func (cme *CacheMissError) Error() string {
 	return fmt.Sprintf("Cache miss on key %s", cme.key)
 }
 
-func New(capacity int, maxTTLSeconds float64) Cache {
+func New(capacity int, maxTTLSeconds float64) *Cache {
 	if capacity <= 0 {
 		panic("Cache capacity must be greater than 0")
 	}
@@ -61,17 +67,20 @@ func New(capacity int, maxTTLSeconds float64) Cache {
 	head.next = tail
 	tail.prev = head
 
-	return Cache{
+	return &Cache{
 		Capacity:      capacity,
 		Size:          0,
 		cache:         make(map[string]*node),
 		head:          head,
 		tail:          tail,
-		maxTTLSeconds: maxTTLSeconds,
+		MaxTTLSeconds: maxTTLSeconds,
 	}
 }
 
 func CacheKey(method, path, query string) string {
+	if query == "" {
+		return method + " " + path
+	}
 	return method + " " + path + "?" + query
 }
 
@@ -134,23 +143,25 @@ func (c *Cache) Get(key string) (CacheEntry, error) {
 		return CacheEntry{}, &CacheMissError{key: key}
 	}
 
-	if entry, ok := c.cache[key]; ok {
+	if node, ok := c.cache[key]; ok {
 		// If the cache entry has expired, we treat it as a cache miss
-		if now.Sub(entry.timestamp).Abs().Seconds() >= c.maxTTLSeconds {
+		if now.Sub(node.val.Timestamp).Seconds() >= node.maxTTLSeconds {
 			c.remove(key)
 			return CacheEntry{}, &CacheMissError{key: key}
 		}
 
-		c.push_back(entry)
+		c.push_back(node)
 
-		return entry.val, nil
+		return node.val, nil
 	}
 
 	// If we didn't find it in the cache, we return cache miss
 	return CacheEntry{}, &CacheMissError{key: key}
 }
 
-func (c *Cache) Put(key string, value CacheEntry) {
+// Inserts the cache entry at the given key with the time to live provided.
+// The timestamp at which the cache was inserted is placed into the value too.
+func (c *Cache) Put(key string, value CacheEntry, ttl float64) {
 	now := time.Now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -158,17 +169,20 @@ func (c *Cache) Put(key string, value CacheEntry) {
 	if _, ok := c.cache[key]; ok {
 		// If we get a cache hit, we should update the value and timestamp
 		c.cache[key].val = value
-		c.cache[key].timestamp = now
+		c.cache[key].val.Timestamp = now
+		c.cache[key].maxTTLSeconds = ttl
 	} else {
 		if c.Size == c.Capacity {
 			c.evict()
 		}
+		value.Timestamp = now
+
 		c.cache[key] = &node{
-			key:       key,
-			val:       value,
-			next:      nil,
-			prev:      nil,
-			timestamp: now,
+			key:           key,
+			val:           value,
+			next:          nil,
+			prev:          nil,
+			maxTTLSeconds: ttl,
 		}
 		c.Size++
 	}
