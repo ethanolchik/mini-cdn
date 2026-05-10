@@ -55,7 +55,7 @@ func copyHeaders(dest, src http.Header) {
 
 type originResult struct {
 	entry       *cache.CacheEntry
-	ttl         float64
+	ttl         time.Duration
 	shouldCache bool
 }
 
@@ -159,7 +159,7 @@ func (rp *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		defer resp.Body.Close()
 
-		ttl := rp.cache.MaxTTLSeconds
+		ttl := rp.cache.GetMaxTTLSeconds() // Default TTL if Cache-Control header is not provided
 		shouldCache := true
 		cacheControl := resp.Header.Get("Cache-Control")
 
@@ -172,7 +172,7 @@ func (rp *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 			if strings.HasPrefix(dir, "max-age=") {
 				if parsed, err := strconv.ParseFloat(dir[8:], 64); err == nil {
-					ttl = parsed
+					ttl = time.Duration(parsed * float64(time.Second))
 				}
 			}
 		}

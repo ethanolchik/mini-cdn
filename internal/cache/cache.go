@@ -13,7 +13,7 @@ type node struct {
 	next *node
 	prev *node
 
-	maxTTLSeconds float64
+	maxTTLSeconds time.Duration
 }
 
 type CacheEntry struct {
@@ -30,14 +30,13 @@ type CacheEntry struct {
 // LRU Cache
 // Implemented as a doubly-linked list, where elements are inserted at the tail and removed from the head.
 type Cache struct {
-	Capacity int              // The capacity of the cache
-	Size     int              // The number of elements currently in cache
+	capacity int              // The capacity of the cache
+	size     int              // The number of elements currently in cache
 	cache    map[string]*node // A hashmap where keys are http method + url path + query string, values are nodes
 	head     *node
 	tail     *node
 
-	// The maximum time to live that the cache will default to when Cache-Control header is not provided
-	MaxTTLSeconds float64
+	maxTTLSeconds float64
 	mu            sync.Mutex
 }
 
@@ -68,12 +67,12 @@ func New(capacity int, maxTTLSeconds float64) *Cache {
 	tail.prev = head
 
 	return &Cache{
-		Capacity:      capacity,
-		Size:          0,
+		capacity:      capacity,
+		size:          0,
 		cache:         make(map[string]*node),
 		head:          head,
 		tail:          tail,
-		MaxTTLSeconds: maxTTLSeconds,
+		maxTTLSeconds: maxTTLSeconds,
 	}
 }
 
@@ -84,6 +83,8 @@ func CacheKey(method, path, query string) string {
 	return method + " " + path + "?" + query
 }
 
+// push_back moves the given entry to the tail of the list, which represents that it is the most recently used element in the cache.
+// If the entry is not in the list, it will be added to the tail. If the entry is already in the list, it will be moved to the tail.
 func (c *Cache) push_back(entry *node) {
 	// If the entry is already in the list, we should remove it first before pushing it back to the tail.
 	if entry.prev != nil && entry.next != nil {
@@ -97,9 +98,7 @@ func (c *Cache) push_back(entry *node) {
 	c.tail.prev = entry
 	entry.next = c.tail
 
-	if _, ok := c.cache[entry.key]; !ok {
-		c.cache[entry.key] = entry
-	}
+	c.cache[entry.key] = entry
 }
 
 // Remove an element from the cache by its key
@@ -109,7 +108,7 @@ func (c *Cache) remove(key string) error {
 		entry.next.prev = entry.prev
 
 		delete(c.cache, key)
-		c.Size--
+		c.size--
 		return nil
 	} else {
 		return &CacheMissError{key}
@@ -118,7 +117,7 @@ func (c *Cache) remove(key string) error {
 
 // Evict the least recently used element from the cache, which is the one at the head of the list.
 func (c *Cache) evict() {
-	if c.Size == 0 {
+	if c.Size() == 0 {
 		return
 	}
 
@@ -128,7 +127,7 @@ func (c *Cache) evict() {
 	lru.next.prev = c.head
 
 	delete(c.cache, lru.key)
-	c.Size--
+	c.size--
 }
 
 // Get a value in cache from its key.
@@ -139,13 +138,13 @@ func (c *Cache) Get(key string) (CacheEntry, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.Size == 0 {
+	if c.Size() == 0 {
 		return CacheEntry{}, &CacheMissError{key: key}
 	}
 
 	if node, ok := c.cache[key]; ok {
 		// If the cache entry has expired, we treat it as a cache miss
-		if now.Sub(node.val.Timestamp).Seconds() >= node.maxTTLSeconds {
+		if now.Sub(node.val.Timestamp) >= node.maxTTLSeconds {
 			c.remove(key)
 			return CacheEntry{}, &CacheMissError{key: key}
 		}
@@ -161,18 +160,18 @@ func (c *Cache) Get(key string) (CacheEntry, error) {
 
 // Inserts the cache entry at the given key with the time to live provided.
 // The timestamp at which the cache was inserted is placed into the value too.
-func (c *Cache) Put(key string, value CacheEntry, ttl float64) {
+func (c *Cache) Put(key string, value CacheEntry, ttl time.Duration) {
 	now := time.Now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if _, ok := c.cache[key]; ok {
+	if n, ok := c.cache[key]; ok {
 		// If we get a cache hit, we should update the value and timestamp
-		c.cache[key].val = value
-		c.cache[key].val.Timestamp = now
-		c.cache[key].maxTTLSeconds = ttl
+		n.val = value
+		n.val.Timestamp = now
+		n.maxTTLSeconds = ttl
 	} else {
-		if c.Size == c.Capacity {
+		if c.Size() == c.Capacity() {
 			c.evict()
 		}
 		value.Timestamp = now
@@ -184,8 +183,24 @@ func (c *Cache) Put(key string, value CacheEntry, ttl float64) {
 			prev:          nil,
 			maxTTLSeconds: ttl,
 		}
-		c.Size++
+		c.size++
 	}
 
 	c.push_back(c.cache[key])
+}
+
+// The current size of the cache, i.e. the number of elements currently in cache.
+func (c *Cache) Size() int {
+	return c.size
+}
+
+// The capacity of the cache, i.e. the maximum number of elements that can be in cache at any time.
+func (c *Cache) Capacity() int {
+	return c.capacity
+}
+
+// The maximum TTL in seconds for cache entries in this cache.
+// This is used as the default TTL for cache entries if the origin server does not provide a Cache-Control header with max-age directive.
+func (c *Cache) GetMaxTTLSeconds() time.Duration {
+	return time.Duration(c.maxTTLSeconds * float64(time.Second))
 }
