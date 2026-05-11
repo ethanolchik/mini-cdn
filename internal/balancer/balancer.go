@@ -22,16 +22,6 @@ type RoundRobinBalancer struct {
 	idx            uint64
 }
 
-// New creates a new RoundRobinBalancer with the given list of origins. Initially, all origins are considered healthy.
-func New(origins []string) *RoundRobinBalancer {
-	rrb := &RoundRobinBalancer{
-		origins: origins,
-	}
-	// Prefill healthy_origins so that GetOrigin never encounters nil on Load().
-	rrb.healthyOrigins.Store(origins) // Initially, all origins are considered healthy.
-	return rrb
-}
-
 func isOriginHealthy(client *http.Client, origin string) bool {
 	// Only fetch the headers for efficiency
 	resp, err := client.Head(origin)
@@ -50,6 +40,17 @@ func isOriginHealthy(client *http.Client, origin string) bool {
 	defer resp.Body.Close()
 	// Consider an origin healthy if it responds with a valid HTTP status code (e.g., 200 OK).
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
+}
+
+// New creates a new RoundRobinBalancer with the given list of origins. Initially, all origins are considered healthy.
+func New(origins []string) *RoundRobinBalancer {
+	rrb := &RoundRobinBalancer{origins: origins}
+	// Prefill healthy_origins so that GetOrigin never encounters nil on Load().
+	rrb.healthyOrigins.Store(origins) // Initially, all origins are considered healthy.
+
+	go rrb.RunHealthChecks(context.Background(), 10*time.Second)
+
+	return rrb
 }
 
 // GetOrigin returns the next available origin in a round-robin fashion. It only considers origins that are currently 'up' (true).
