@@ -38,7 +38,7 @@ func newTestProxy(originURL string) *ReverseProxy {
 // newTestProxyWithTTL creates a proxy with a custom TTL for testing expiry.
 func newTestProxyWithTTL(originURL string, ttl float64) *ReverseProxy {
 	rp := newTestProxy(originURL)
-	rp.cache = cache.New(100, 60)
+	rp.cache = cache.New(100, ttl)
 	return rp
 }
 
