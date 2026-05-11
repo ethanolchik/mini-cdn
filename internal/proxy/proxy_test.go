@@ -1,24 +1,43 @@
 package proxy
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/ethanolchik/mini-cdn/internal/balancer"
 	"github.com/ethanolchik/mini-cdn/internal/cache"
 )
 
+type testBalancer struct {
+	origins []string
+	idx     uint64
+}
+
+func (b *testBalancer) GetOrigin() (string, error) {
+	if len(b.origins) == 0 {
+		return "", errors.New("no healthy origins available")
+	}
+
+	oldIdx := atomic.AddUint64(&b.idx, 1) - 1
+	return b.origins[oldIdx%uint64(len(b.origins))], nil
+}
+
+func (b *testBalancer) RunHealthChecks(context.Context, time.Duration) {}
+
+func (b *testBalancer) UpdateHealthyOrigins(map[string]bool) {}
+
 // newTestProxy creates a proxy pointing at the given origin URL.
 func newTestProxy(originURL string) *ReverseProxy {
-	return New(balancer.New([]string{originURL}))
+	return New(&testBalancer{origins: []string{originURL}})
 }
 
 // newTestProxyWithTTL creates a proxy with a custom TTL for testing expiry.
 func newTestProxyWithTTL(originURL string, ttl float64) *ReverseProxy {
-	rp := New(balancer.New([]string{originURL}))
+	rp := newTestProxy(originURL)
 	rp.cache = cache.New(100, 60)
 	return rp
 }
@@ -96,22 +115,22 @@ func TestCacheKeyIsolation(t *testing.T) {
 	}
 }
 
-// TestBadGatewayNoOrigins verifies that a proxy with no origins returns 502.
-func TestBadGatewayNoOrigins(t *testing.T) {
-	rp := New(balancer.New([]string{}))
+// TestNotAvailableNoOrigins verifies that a proxy with no origins returns 503.
+func TestNotAvailableNoOrigins(t *testing.T) {
+	rp := New(&testBalancer{})
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	w := httptest.NewRecorder()
 	rp.ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadGateway {
-		t.Errorf("expected 502 Bad Gateway, got %d", w.Code)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503 Service Unavailable, got %d", w.Code)
 	}
 }
 
 // TestBadGatewayUnreachableOrigin verifies that an unreachable origin returns 502.
 func TestBadGatewayUnreachableOrigin(t *testing.T) {
-	rp := New(balancer.New([]string{"http://localhost:1"})) // nothing listening here
+	rp := New(&testBalancer{origins: []string{"http://localhost:1"}}) // nothing listening here
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	w := httptest.NewRecorder()
