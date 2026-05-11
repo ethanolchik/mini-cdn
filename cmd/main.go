@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"time"
@@ -13,7 +14,7 @@ func main() {
 	origins := []string{"http://localhost:8080"}
 	lb := balancer.New(origins)
 
-	go lb.RunHealthChecks(10 * time.Second)
+	go lb.RunHealthChecks(context.Background(), 10*time.Second)
 
 	p := proxy.New(lb)
 

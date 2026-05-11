@@ -1,6 +1,7 @@
 package balancer
 
 import (
+	"context"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -8,8 +9,8 @@ import (
 
 type Balancer interface {
 	GetOrigin() string
-	RunHealthChecks(interval time.Duration)
-	UpdateHealthyOrigins(status map[string]bool)
+	RunHealthChecks(ctx context.Context, interval time.Duration)
+	UpdateHealthyOrigins(cstatus map[string]bool)
 }
 
 // A load balancer that implements a round-robin strategy.
@@ -56,9 +57,10 @@ func (rrb *RoundRobinBalancer) GetOrigin() string {
 
 // Run a health check on all origins at a specified interval.
 // A health check is performed by sending an HTTP GET request to each origin and checking if the response status code indicates a healthy state (e.g., 200 OK).
-func (rrb *RoundRobinBalancer) RunHealthChecks(interval time.Duration) {
+func (rrb *RoundRobinBalancer) RunHealthChecks(ctx context.Context, interval time.Duration) {
 	client := http.Client{Timeout: 2 * time.Second}
 	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 
 	check := func() {
 		status := make(map[string]bool, len(rrb.origins))
@@ -72,8 +74,14 @@ func (rrb *RoundRobinBalancer) RunHealthChecks(interval time.Duration) {
 	// Run an initial check immediately before starting the ticker to avoid waiting for the first tick.
 	check()
 
-	for range ticker.C {
-		check()
+	for {
+		// Wait for the next tick or context cancellation.
+		select {
+		case <-ticker.C:
+			check()
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 
