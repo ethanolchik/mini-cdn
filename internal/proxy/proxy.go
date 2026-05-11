@@ -127,9 +127,9 @@ func (rp *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	target := rp.balancer.GetOrigin()
-	if target == "" {
-		http.Error(w, "No healthy origin available", http.StatusServiceUnavailable)
+	target, err := rp.balancer.GetOrigin()
+	if err != nil {
+		http.Error(w, "No healthy origins available", http.StatusServiceUnavailable)
 		return
 	}
 
