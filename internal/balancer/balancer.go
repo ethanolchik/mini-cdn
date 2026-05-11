@@ -60,13 +60,20 @@ func (rrb *RoundRobinBalancer) RunHealthChecks(interval time.Duration) {
 	client := http.Client{Timeout: 2 * time.Second}
 	ticker := time.NewTicker(interval)
 
-	for range ticker.C {
+	check := func() {
 		status := make(map[string]bool, len(rrb.origins))
 		for _, addr := range rrb.origins {
 			status[addr] = isOriginHealthy(&client, addr)
 		}
 
 		rrb.UpdateHealthyOrigins(status)
+	}
+
+	// Run an initial check immediately before starting the ticker to avoid waiting for the first tick.
+	check()
+
+	for range ticker.C {
+		check()
 	}
 }
 
