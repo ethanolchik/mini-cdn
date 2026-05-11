@@ -7,17 +7,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethanolchik/mini-cdn/internal/balancer"
 	"github.com/ethanolchik/mini-cdn/internal/cache"
 )
 
 // newTestProxy creates a proxy pointing at the given origin URL.
 func newTestProxy(originURL string) *ReverseProxy {
-	return New([]string{originURL})
+	return New(balancer.New([]string{originURL}))
 }
 
 // newTestProxyWithTTL creates a proxy with a custom TTL for testing expiry.
 func newTestProxyWithTTL(originURL string, ttl float64) *ReverseProxy {
-	rp := New([]string{originURL})
+	rp := New(balancer.New([]string{originURL}))
 	rp.cache = cache.New(100, 60)
 	return rp
 }
@@ -97,7 +98,7 @@ func TestCacheKeyIsolation(t *testing.T) {
 
 // TestBadGatewayNoOrigins verifies that a proxy with no origins returns 502.
 func TestBadGatewayNoOrigins(t *testing.T) {
-	rp := New([]string{})
+	rp := New(balancer.New([]string{}))
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	w := httptest.NewRecorder()
@@ -110,7 +111,7 @@ func TestBadGatewayNoOrigins(t *testing.T) {
 
 // TestBadGatewayUnreachableOrigin verifies that an unreachable origin returns 502.
 func TestBadGatewayUnreachableOrigin(t *testing.T) {
-	rp := New([]string{"http://localhost:1"}) // nothing listening here
+	rp := New(balancer.New([]string{"http://localhost:1"})) // nothing listening here
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	w := httptest.NewRecorder()

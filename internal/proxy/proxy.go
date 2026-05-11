@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ethanolchik/mini-cdn/internal/balancer"
 	"github.com/ethanolchik/mini-cdn/internal/cache"
 	"golang.org/x/sync/singleflight"
 )
@@ -61,18 +62,18 @@ type originResult struct {
 
 // ReverseProxy is a simple reverse proxy that forwards requests to the specified origins.
 type ReverseProxy struct {
-	origins []string
-	client  *http.Client
-	cache   *cache.Cache
-	group   singleflight.Group
+	client   *http.Client
+	cache    *cache.Cache
+	group    singleflight.Group
+	balancer balancer.Balancer
 }
 
 // New creates a new ReverseProxy with the specified origins and a default HTTP client with a 30 second timeout and no redirects.
-func New(origins []string) *ReverseProxy {
+func New(b balancer.Balancer) *ReverseProxy {
 	return &ReverseProxy{
-		origins: origins,
+		balancer: b,
 		client: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 10 * time.Second,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
@@ -109,12 +110,6 @@ func (rp *ReverseProxy) cloneRequest(r *http.Request, originURL string) (*http.R
 // Then it forwards the request to the first origin in the list and writes the response back to the client.
 // TODO: In the future, we can add load balancing and health checks to distribute requests across multiple origins.
 func (rp *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// If we don't have any origins, return
-	if len(rp.origins) == 0 {
-		http.Error(w, "Bad Gateway", http.StatusBadGateway)
-		return
-	}
-
 	// Check if the request is in cache. If it is, return the cached response. If it's not, forward the request to the origin and cache the response for future requests.
 	cacheKey := cache.CacheKey(r.Method, r.URL.Path, r.URL.RawQuery)
 	if entry, err := rp.cache.Get(cacheKey); err == nil {
@@ -132,8 +127,14 @@ func (rp *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	target := rp.balancer.GetOrigin()
+	if target == "" {
+		http.Error(w, "No healthy origin available", http.StatusServiceUnavailable)
+		return
+	}
+
 	// For now, we select the first origin. This will change when load balancing is introduced
-	newReq, err := rp.cloneRequest(r, rp.origins[0])
+	newReq, err := rp.cloneRequest(r, target)
 	if err != nil {
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 		return
