@@ -6,6 +6,12 @@ import (
 	"time"
 )
 
+type Balancer interface {
+	GetOrigin() string
+	RunHealthChecks(interval time.Duration)
+	UpdateHealthyOrigins(status map[string]bool)
+}
+
 // A load balancer that implements a round-robin strategy.
 type RoundRobinBalancer struct {
 	origins        []string
