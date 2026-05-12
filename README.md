@@ -4,6 +4,7 @@ A reverse proxy and caching layer in Go with LRU eviction, per-entry TTL driven 
 ---
 
 ## Benchmarks
+### `wrk` benchmark
 Benchmarked with `wrk` (-t4 -c100 -d30s) against a local origin with 20ms simulated latency:
 | Scenario | Req/s | Avg Latency | Image |
 |---|---|---|---|
@@ -25,11 +26,13 @@ mini-cdn/
 ├── internal/
 │   ├── proxy/
 │   │   ├── proxy.go         # reverse proxy, caching, singleflight
-│   │   └── proxy_test.go    # 88.2% statement coverage
+│   │   └── proxy_test.go
 │   ├── cache/
-│   │   └── cache.go         # LRU cache with per-entry TTL
-│   └── balancer/
-│       └── balancer.go      # round-robin balancer with health checks
+│   │   ├── cache.go         # LRU cache with per-entry TTL
+│   │   └── cache_test.go
+│   ├── balancer/
+│   │   ├── balancer.go      # round-robin balancer with health checks
+│   │   └── balancer_test.go
 ├── scripts/
 │   └── random_path.lua      # wrk script for cache-miss benchmarking
 ├── assets/                  # contains images included in readme
@@ -40,7 +43,10 @@ mini-cdn/
 ---
  
 ## Running
- 
+
+### Requirements
+- Go (v1.26.3+)
+- Python3 (3.12.3+)
 ```bash
 # Start a test origin on :8080
 go run cmd/origin/main.go
@@ -50,6 +56,19 @@ go run cmd/main.go
  
 # Test
 curl -v http://localhost:8081/
+```
+Alternatively, you may also use the python scripts provided:
+```bash
+python3 scripts/start_origins.py
+python3 scripts/start_proxy.py
+```
+The python scripts start the origin servers automatically on http://localhost on ports 8081-8085 inclusive. The proxy server starts automatically on port 8080.
+
+If you want to run the origins/proxy on different ports, you may specify them as arguments like so:
+```bash
+python3 scripts/start_origins.py 2222 3333 4444 # start origins on ports 2222 3333 4444
+# the http:// can be omitted as shown below
+python3 scripts/start_proxy.py 1111 localhost:2222 http://localhost:3333 localhost:4444 # start proxy on port 0000 and point to origins
 ```
 
 ### Running Tests
