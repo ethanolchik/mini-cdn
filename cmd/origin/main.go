@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -12,8 +13,9 @@ func main() {
 		time.Sleep(20 * time.Millisecond)
 		fmt.Fprintf(w, "Hello from origin server %s! You requested: %s\n", r.Host, r.URL.Path)
 	})
-	log.Println("Origin server listening on :8080")
-	if err := http.ListenAndServe(":8080", nil); err != nil {
+	port := os.Args[1]
+	log.Println("Origin server listening on " + port)
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Fatal(err)
 	}
 }
